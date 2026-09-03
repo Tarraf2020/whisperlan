@@ -1,0 +1,31 @@
+[project]
+name = "whisper-lan"
+version = "1.1.0"
+description = "🤫 whisper — LAN terminal messenger. Same WiFi, no server, just type."
+readme = "README.md"
+requires-python = ">=3.8"
+license = { text = "MIT" }
+authors = [{ name = "Tarraf2020" }]
+keywords = ["lan", "chat", "terminal", "messenger", "curses"]
+classifiers = [
+  "Environment :: Console :: Curses",
+  "License :: OSI Approved :: MIT License",
+  "Operating System :: MacOS",
+  "Operating System :: POSIX :: Linux",
+  "Programming Language :: Python :: 3",
+  "Topic :: Communications :: Chat",
+]
+
+[project.scripts]
+whisper = "whisper:main"
+
+[project.urls]
+Homepage = "https://github.com/Tarraf2020/whisper"
+Issues = "https://github.com/Tarraf2020/whisper/issues"
+
+[tool.setuptools]
+py-modules = ["whisper"]
+
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
