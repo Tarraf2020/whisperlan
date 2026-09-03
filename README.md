@@ -1,8 +1,17 @@
 # 🤫 whisper — LAN terminal messenger
 
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+[![Python 3.8+](https://img.shields.io/badge/python-3.8%2B-blue.svg)](whisper.py)
+[![Zero deps](https://img.shields.io/badge/deps-zero-brightgreen.svg)](whisper.py)
+[![Platform](https://img.shields.io/badge/platform-macOS%20%7C%20Linux-lightgrey.svg)](whisper.py)
+
 **Same WiFi. No server. No account. Just type.**
 
 `whisper` turns every laptop on your local network into a chatroom — plus encrypted 1-on-1s. One Python file, zero dependencies, macOS + Linux.
+
+![whisper demo](docs/demo.svg)
+
+> 🎥 That's a static mock. To record a real demo: `brew install vhs` (or asciinema), run two `whisper --name …` sessions side by side, export to `docs/demo.gif`, and swap the image link above. Real typing demos convert 10x better than mockups.
 
 ```
 ┌─────────────────────────────────────────────────┐
@@ -84,6 +93,15 @@ Packet shape: JSON `{v, id, type, from, uid, to?, text, ts, ip, pport}`, types `
 - **Solo test** → two terminals: `whisper --name ali` + `whisper --name bob`.
 - **Weird characters** → use iTerm2 / Ghostty / Kitty / Terminal.app.
 - **Uninstall** → `./uninstall.sh`.
+
+## 💖 Sponsor
+
+If whisper made your LAN party better, fuel the next feature:
+
+- Hit **⭐ Star** + GitHub **Sponsor** (button at the top, via `.github/FUNDING.yml`)
+- Or Ko-fi: `whisperlan` (placeholder — swap in your real link)
+
+> Maintainer: after `git push`, go to github.com → your repo → Settings → Sponsors (or ko-fi.com) and replace `Tarraf2020` / `whisperlan` in `.github/FUNDING.yml` with your real handles, or the button goes nowhere.
 
 ## 🤝 Contributing
 
