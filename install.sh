@@ -1,15 +1,15 @@
 #!/usr/bin/env bash
-# whisper installer — works locally AND via curl:
-#   curl -fsSL https://raw.githubusercontent.com/Tarraf2020/whisper/main/install.sh | bash
-#   (replace Tarraf2020/whisper with your repo if you forked it)
+# whisperlan installer — works locally AND via curl:
+#   curl -fsSL https://raw.githubusercontent.com/Tarraf2020/whisperlan/main/install.sh | bash
+#   (replace Tarraf2020/whisperlan with your repo if you forked it)
 set -euo pipefail
 
-REPO="${REPO:-Tarraf2020/whisper}"
+REPO="${REPO:-Tarraf2020/whisperlan}"
 BRANCH="${BRANCH:-main}"
 BIN_DIR="${BIN_DIR:-$HOME/.local/bin}"
-NAME="whisper"
+NAME="whisperlan"
 
-echo "🤫 installing whisper..."
+echo "🤫 installing whisperlan..."
 
 mkdir -p "$BIN_DIR"
 
@@ -24,6 +24,8 @@ else
 fi
 
 chmod +x "$BIN_DIR/$NAME"
+# short alias still works: `whisper` == `whisperlan`
+ln -sf "$BIN_DIR/$NAME" "$BIN_DIR/whisper"
 
 # make sure BIN_DIR is on PATH
 if ! echo ":$PATH:" | grep -q ":$BIN_DIR:"; then
@@ -38,6 +40,6 @@ echo ""
 echo ""
 echo "✅ done! open a NEW terminal, then type:"
 echo ""
-echo "   whisper --name ali"
+echo "   whisperlan --name ali   (or short: whisper --name ali)"
 echo ""
 echo "  (same WiFi + same --port on all machines)"

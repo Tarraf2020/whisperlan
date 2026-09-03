@@ -1,7 +1,7 @@
 [project]
-name = "whisper-lan"
+name = "whisperlan"
 version = "1.1.0"
-description = "🤫 whisper — LAN terminal messenger. Same WiFi, no server, just type."
+description = "🤫 whisperlan — terminal whispers for your LAN. Same WiFi, no server, just type."
 readme = "README.md"
 requires-python = ">=3.8"
 license = { text = "MIT" }
@@ -17,11 +17,12 @@ classifiers = [
 ]
 
 [project.scripts]
+whisperlan = "whisper:main"
 whisper = "whisper:main"
 
 [project.urls]
-Homepage = "https://github.com/Tarraf2020/whisper"
-Issues = "https://github.com/Tarraf2020/whisper/issues"
+Homepage = "https://github.com/Tarraf2020/whisperlan"
+Issues = "https://github.com/Tarraf2020/whisperlan/issues"
 
 [tool.setuptools]
 py-modules = ["whisper"]

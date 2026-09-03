@@ -1,4 +1,4 @@
-# 🤫 whisper — LAN terminal messenger
+# 🤫 whisperlan — terminal whispers for your LAN
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Python 3.8+](https://img.shields.io/badge/python-3.8%2B-blue.svg)](whisper.py)
@@ -7,7 +7,7 @@
 
 **Same WiFi. No server. No account. Just type.**
 
-`whisper` turns every laptop on your local network into a chatroom — plus encrypted 1-on-1s. One Python file, zero dependencies, macOS + Linux.
+`whisperlan` turns every laptop on your local network into a chatroom — plus encrypted 1-on-1s. One Python file, zero dependencies, macOS + Linux. The command stays short: type `whisper` (or `whisperlan`, same thing).
 
 ![whisper demo](docs/demo.svg)
 
@@ -30,30 +30,32 @@
 
 **Option A — one-liner (recommended):**
 ```bash
-curl -fsSL https://raw.githubusercontent.com/Tarraf2020/whisper/main/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/Tarraf2020/whisperlan/main/install.sh | bash
 ```
 
 **Option B — clone:**
 ```bash
-git clone https://github.com/Tarraf2020/whisper.git
+git clone https://github.com/Tarraf2020/whisperlan.git
 cd whisper
 ./install.sh
 ```
 
 **Option C — pip:**
 ```bash
-pip install git+https://github.com/Tarraf2020/whisper.git
+pip install git+https://github.com/Tarraf2020/whisperlan.git
 ```
 
 > Forked it or renamed your repo? Set `REPO=you/name`:
 > `curl -fsSL ... | REPO=you/name bash`
-> Don't forget to replace `Tarraf2020/whisper` in this README + `pyproject.toml` with your repo path.
+> Don't forget to replace `Tarraf2020/whisperlan` in this README + `pyproject.toml` with your repo path.
 
 Requires: **Python 3.8+** (stdlib only — `curses`, `socket`, `ssl`). No packages to install.
 
 ## 🚀 Use it
 
 ```bash
+whisperlan --name ali
+# short alias works too:
 whisper --name ali
 ```
 

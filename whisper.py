@@ -772,7 +772,7 @@ def main():
     args = ap.parse_args()
 
     if args.version:
-        print(f"whisper {VERSION}")
+        print(f"whisperlan {VERSION}")
         return
 
     nick = (args.name or args.nick
