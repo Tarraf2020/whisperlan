@@ -1,33 +1,34 @@
 #!/usr/bin/env python3
 """
-WHISPER 🤫 — lan party terminal messenger
-Zero-deps. Same WiFi. No server. No cloud. Just whispers.
+WHISPERLAN 🤫 — terminal whispers for your LAN
+One file. Zero deps. Same WiFi. No server. No cloud.
 
   Run it like a real command:
-    whisper --name ali
-    whisper --name "ali" --port 54545
-    whisper --help
+    whisperlan --name ali          (short alias: whisper --name ali)
+    whisperlan --name "ali" --port 54545
+    whisperlan --help
 
   How it works:
-  - UDP broadcast on port 54545 for discovery + messages
+  - UDP broadcast on port 54545 for discovery + the group room
+  - TLS-encrypted TCP (port+1) for private 1-on-1s — unicast, nobody else gets them
   - Every peer shouts HELLO + HEARTBEAT, everyone else tracks who's online
-  - MSG goes to the whole LAN room, DM goes to one name (still broadcast,
-    but only rendered by target — sneaky but simple, it's a LAN toy)
 
   Commands inside:
-    /dm @bob hello      whisper to one person
-    /nick newname       rename (re-announces, /name works too)
-    /me dances          action message
+    /p @bob hello      open encrypted private chat 🔒
+    /room              back to the LAN room
+    /dm @bob hello     one private msg, no view switch
+    /name newname      rename (/nick works too)
+    /me dances         action message
     /shrug /flip /unflip /party
-    /online             who is here
-    /clear              wipe screen
-    /help               this
-    /quit               slip away quietly
+    /online            who is here
+    /clear             wipe current view
+    /help              this
+    /quit              slip away quietly
 
   Tips:
-  - All machines must be on the same WiFi/LAN, same port.
+  - All machines must be on the same WiFi/LAN, same --port.
   - macOS firewall may ask once — allow it.
-  - Run two copies on one Mac to test (uses SO_REUSEPORT).
+  - Run two copies on one Mac to test (ports auto-bump).
 """
 import argparse
 import curses
@@ -45,7 +46,7 @@ import threading
 import time
 import uuid
 
-VERSION = "1.1.0"
+VERSION = "1.1.1"
 PORT_DEFAULT = 54545
 BROADCAST = "255.255.255.255"
 HEARTBEAT_EVERY = 5
@@ -144,13 +145,18 @@ class Net:
         srv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         srv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         # find a free port (so 2 copies on one Mac both work)
+        bound = False
         for cand in range(self.pport, self.pport + 20):
             try:
                 srv.bind(("0.0.0.0", cand))
                 self.pport = cand
+                bound = True
                 break
             except OSError:
                 continue
+        if not bound:
+            srv.close()
+            raise OSError(f"no free private port in {self.pport}..{self.pport + 19}")
         srv.listen(5)
         srv.settimeout(0.5)
         self._priv_srv = srv
@@ -236,7 +242,8 @@ class Net:
     def rename(self, new_nick):
         old = self.nick
         self.nick = new_nick
-        self.send({"type": "rename", "old": old, "new": new_nick})
+        self.send({"type": "rename", "old": old, "new": new_nick,
+                   "ip": self.local_ip, "pport": self.pport})
 
     def listen_loop(self):
         while self.running:
@@ -411,8 +418,10 @@ def pump_packets(net: Net, st: State, bell: list):
             st.add("sys", "", f"── {nick} slipped away ──")
         elif t == "rename":
             old, new = p.get("old", "?"), p.get("new", "?")
+            old_info = st.peer(old)  # keep private-contact info across renames
             st.remove_peer(old)
-            st.touch_peer(new, uid, ip, pport)
+            st.touch_peer(new, uid, ip or old_info.get("ip"),
+                          pport or old_info.get("pport"))
             st.add("sys", "", f"── {old} is now {new} ──")
         elif t == "msg":
             st.touch_peer(nick, uid, ip, pport)
@@ -638,7 +647,9 @@ def handle_command(cmd, net, st, input_state, stdscr=None):
             with st.lock: st.priv[st.view] = []
         return None
     if verb == "/online":
-        names = ", ".join([n for n, _ in st.online()] + [st.me + " (you)"]) or "just you, echo… echo…"
+        with st.lock:
+            tagged = [f"{n} 🔒" if p.get("pport") else n for n, p in st.peers.items()]
+        names = ", ".join(sorted(tagged) + [st.me + " (you)"]) or "just you, echo… echo…"
         st.add("sys", "", f"── online: {names} ──")
         return None
     if verb == "/help":
@@ -763,7 +774,7 @@ def run_tui(net: Net, st: State):
 def main():
     ap = argparse.ArgumentParser(
         prog="whisper",
-        description="🤫 whisper — LAN terminal messenger. Same WiFi, no server, just type.")
+        description="🤫 whisperlan — terminal whispers for your LAN. Same WiFi, no server, just type.")
     ap.add_argument("--name", "-n", default=None, help="your display name (e.g. --name ali)")
     ap.add_argument("--nick", default=None, help=argparse.SUPPRESS)  # old alias, hidden
     ap.add_argument("--port", "-p", type=int, default=PORT_DEFAULT, help="LAN room port (default 54545, must match friends)")
@@ -781,7 +792,7 @@ def main():
             or getpass.getuser()).strip().replace(" ", "_")[:16] or f"anon-{random.randint(100,999)}"
 
     print("\n".join(BANNER))
-    print(f"\n  🤫 whisper {VERSION}  ·  you are: {nick}  ·  room port: {args.port}")
+    print(f"\n  🤫 whisperlan {VERSION}  ·  you are: {nick}  ·  room port: {args.port}")
     print("  room = broadcast to LAN · private = 🔒 TLS direct (only you two get it)")
     print("  softly broadcasting HELLO to your LAN… (ctrl-C to slip away)\n")
 
