@@ -28,19 +28,26 @@
 
 ## ⚡ Install (30 seconds)
 
-**Option A — one-liner (recommended):**
+**Option A — Homebrew 🍺 (easiest on Mac):**
+```bash
+brew tap Tarraf2020/whisperlan
+brew install whisperlan
+```
+Upgrades later with `brew upgrade whisperlan`.
+
+**Option B — one-liner:**
 ```bash
 curl -fsSL https://raw.githubusercontent.com/Tarraf2020/whisperlan/main/install.sh | bash
 ```
 
-**Option B — clone:**
+**Option C — clone:**
 ```bash
 git clone https://github.com/Tarraf2020/whisperlan.git
 cd whisper
 ./install.sh
 ```
 
-**Option C — pip:**
+**Option D — pip:**
 ```bash
 pip install git+https://github.com/Tarraf2020/whisperlan.git
 ```
