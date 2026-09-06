@@ -77,6 +77,7 @@ You auto-discover each other in ~5 seconds. Flags: `-n` = name, `-p` = room port
 | Rename | `/name newname` |
 | Fun | `/me dances`, `/shrug`, `/flip`, `/unflip`, `/party` |
 | Misc | `/online`, `/clear`, `↑/↓` scroll, `/quit` or `ctrl-C` |
+| 💥 Panic | `/panic` → `/panic yes`: nukes YOUR local history (room + privates + log). Others keep theirs. |
 
 Mention with `@name` in the room → they get a beep. Sidebar shows `(2)` unread badges for privates.
 

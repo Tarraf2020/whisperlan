@@ -22,6 +22,7 @@ One file. Zero deps. Same WiFi. No server. No cloud.
     /shrug /flip /unflip /party
     /online            who is here
     /clear             wipe current view
+    /panic             NUKE all local history (asks first) 💥
     /help              this
     /quit              slip away quietly
 
@@ -46,8 +47,9 @@ import threading
 import time
 import uuid
 
-VERSION = "1.1.1"
+VERSION = "1.2.0"
 PORT_DEFAULT = 54545
+LOG_PATH = os.path.expanduser("~/.whisper.log")
 BROADCAST = "255.255.255.255"
 HEARTBEAT_EVERY = 5
 PEER_TIMEOUT = 15
@@ -370,6 +372,7 @@ HELP = """commands:
   /shrug /flip /unflip /party fun
   /online                     who's here
   /clear                      wipe current view
+  /panic                      NUKE all local history (asks first) 💥
   /help                       this help
   /quit                       slip away
 in private: just type — it goes 🔒 direct (TLS) to one person, nobody else gets it."""
@@ -652,6 +655,34 @@ def handle_command(cmd, net, st, input_state, stdscr=None):
         names = ", ".join(sorted(tagged) + [st.me + " (you)"]) or "just you, echo… echo…"
         st.add("sys", "", f"── online: {names} ──")
         return None
+    if verb == "/panic":
+        now = time.time()
+        confirm = len(parts) >= 2 and parts[1].lower() in ("yes", "confirm", "doit", "nuke")
+        with st.lock:
+            pending = getattr(st, "panic_armed_at", 0)
+            fresh = (now - pending) < 30
+        if confirm and fresh:
+            with st.lock:
+                st.lines.clear()
+                st.priv.clear()
+                st.unread.clear()
+                st.typing.clear()
+                st.priv_typing.clear()
+                st.view = "room"
+                st.panic_armed_at = 0
+            try:
+                open(LOG_PATH, "w").close()  # nuke the on-disk log too
+                disk = "memory + log file wiped"
+            except OSError:
+                disk = "memory wiped (log file locked — delete ~/.whisper.log by hand)"
+            st.add("sys", "", f"── 💥 panic done. {disk}. nobody was notified. breathe. ──")
+            return "panicked"
+        with st.lock:
+            st.panic_armed_at = now
+        st.add("sys", "", "── ⚠️ /panic wipes ALL local history: room + every private + ~/.whisper.log ──")
+        st.add("sys", "", "── this only wipes YOUR machine. others keep their copies. ──")
+        st.add("sys", "", "── sure? type  /panic yes  within 30s ──")
+        return None
     if verb == "/help":
         for ln in HELP.splitlines(): st.add("sys", "", ln)
         return None
@@ -663,7 +694,7 @@ def run_tui(net: Net, st: State):
     bell = []
     scroll = [0]
     input_buf = ["", 0]  # [text, cursor]
-    logf = open(os.path.expanduser("~/.whisper.log"), "a")
+    logf = open(LOG_PATH, "a")
 
     def loop(stdscr):
         curses.curs_set(1)
@@ -716,7 +747,7 @@ def run_tui(net: Net, st: State):
                     res = handle_command(line, net, st, input_buf)
                     if res == "quit":
                         break
-                    if res == "switched":
+                    if res in ("switched", "panicked"):
                         scroll[0] = 0
                     continue
                 # plain text: private view -> encrypted direct, room -> broadcast
