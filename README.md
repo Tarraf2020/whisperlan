@@ -30,8 +30,7 @@
 
 **Option A — Homebrew 🍺 (easiest on Mac):**
 ```bash
-brew tap Tarraf2020/whisperlan
-brew install whisperlan
+brew tap Tarraf2020/whisperlan https://github.com/Tarraf2020/whisperlan && brew install Tarraf2020/whisperlan/whisperlan
 ```
 Upgrades later with `brew upgrade whisperlan`.
 
