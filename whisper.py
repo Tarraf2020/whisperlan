@@ -47,7 +47,9 @@ import threading
 import time
 import uuid
 
-VERSION = "1.2.0"
+VERSION = "1.3.0"
+REPO = os.environ.get("WHISPER_REPO", "Tarraf2020/whisperlan")
+UPDATE_URL = f"https://raw.githubusercontent.com/{REPO}/main/VERSION"
 PORT_DEFAULT = 54545
 LOG_PATH = os.path.expanduser("~/.whisper.log")
 BROADCAST = "255.255.255.255"
@@ -234,8 +236,8 @@ class Net:
         except OSError:
             pass
 
-    def hello(self):      self.send({"type": "hello", "ip": self.local_ip, "pport": self.pport})
-    def heartbeat(self):  self.send({"type": "heartbeat", "ip": self.local_ip, "pport": self.pport})
+    def hello(self):      self.send({"type": "hello", "ip": self.local_ip, "pport": self.pport, "appv": VERSION})
+    def heartbeat(self):  self.send({"type": "heartbeat", "ip": self.local_ip, "pport": self.pport, "appv": VERSION})
     def bye(self):        self.send({"type": "bye"})
     def msg(self, text):  self.send({"type": "msg", "text": text})
     def dm(self, to, text): self.send({"type": "dm", "to": to, "text": text})  # legacy broadcast DM
@@ -290,6 +292,7 @@ class State:
         self.view = "room"  # "room" or a nick for private view
         self.typing = {}  # nick -> last typing ts (room)
         self.priv_typing = {}  # nick -> last private-typing ts
+        self.newest = {"v": None, "by": None}  # newest peer version seen (update nudge)
         self.lock = threading.Lock()
 
     def touch_peer(self, nick, uid, ip, pport=None):
@@ -361,6 +364,55 @@ def fmt_time(ts):
     return datetime.datetime.fromtimestamp(ts).strftime("%H:%M")
 
 
+def vnewer(a, b) -> bool:
+    """True if version string a > b ('1.3.0' > '1.2.0'). Garbage-safe."""
+    try:
+        pa = tuple(int(x) for x in str(a).strip().split("."))
+        pb = tuple(int(x) for x in str(b).strip().split("."))
+    except (ValueError, AttributeError):
+        return False
+    return pa > pb
+
+
+def fetch_latest_version(timeout=6):
+    """Ask GitHub what the newest release is. None when offline/failed — never raises."""
+    try:
+        import urllib.request
+        req = urllib.request.Request(UPDATE_URL, headers={"User-Agent": "whisperlan"})
+        with urllib.request.urlopen(req, timeout=timeout) as r:
+            return r.read(32).decode().strip().split()[0][:16]
+    except Exception:
+        return None
+
+
+def github_update_check(st: "State"):
+    """Background, cached (24h), silent when offline. Drops a 🔔 line if you're behind."""
+    try:
+        cache_p = os.path.expanduser("~/.whisper-update")
+        now = time.time()
+        latest = None
+        try:
+            with open(cache_p) as f:
+                saved_at, saved_v = f.read().strip().split()
+                if now - float(saved_at) < 86400:
+                    latest = saved_v
+        except (OSError, ValueError):
+            pass
+        if latest is None:
+            latest = fetch_latest_version()
+            if latest:
+                try:
+                    with open(cache_p, "w") as f:
+                        f.write(f"{now} {latest}")
+                except OSError:
+                    pass
+        if latest and vnewer(latest, VERSION):
+            st.add("sys", "", f"── 🔔 whisperlan v{latest} is out (you're on v{VERSION}) ──")
+            st.add("sys", "", f"── update: curl -fsSL https://raw.githubusercontent.com/{REPO}/main/install.sh | bash ──")
+    except Exception:
+        pass
+
+
 # ----------------------------------------------------------------- ui ---
 
 HELP = """commands:
@@ -413,6 +465,17 @@ def pump_packets(net: Net, st: State, bell: list):
         if t in ("hello", "heartbeat"):
             known = nick in dict(st.online())
             st.touch_peer(nick, uid, ip, pport)
+            pv = str(p.get("appv", "") or "")[:16]
+            if pv and vnewer(pv, VERSION):
+                with st.lock:
+                    cur = st.newest.get("v")
+                    if cur is None or vnewer(pv, cur):
+                        st.newest = {"v": pv, "by": nick}
+                        fresh = True
+                    else:
+                        fresh = False
+                if fresh:
+                    st.add("sys", "", f"── 🔔 {nick} runs whisperlan v{pv} (you: v{VERSION}) — update when you can ──")
             if t == "hello" and not known:
                 lock = "🔒" if pport else ""
                 st.add("sys", "", f"── {nick} joined from {ip} {lock} ──")
@@ -716,6 +779,7 @@ def run_tui(net: Net, st: State):
         st.add("sys", "", "── room = everyone. /p @name = encrypted private 🔒 ──")
         for ln in HELP.splitlines(): st.add("sys", "", ln)
         net.hello()
+        threading.Thread(target=github_update_check, args=(st,), daemon=True).start()
 
         while True:
             if pump_packets(net, st, bell):

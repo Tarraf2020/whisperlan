@@ -51,6 +51,14 @@ pip install git+https://github.com/Tarraf2020/whisperlan.git
 
 Requires: **Python 3.8+** (stdlib only — `curses`, `socket`, `ssl`). No packages to install.
 
+## 🔄 Update
+
+Just re-run the installer (it overwrites + keeps your name/history):
+```bash
+curl -fsSL https://raw.githubusercontent.com/Tarraf2020/whisperlan/main/install.sh | bash
+```
+No need to check manually — whisperlan tells you inside the app: a 🔔 line appears when a peer runs a newer version, or when GitHub has one (checked max once a day, silent when offline).
+
 ## 🚀 Use it
 
 ```bash
