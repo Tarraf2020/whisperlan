@@ -47,7 +47,7 @@ import threading
 import time
 import uuid
 
-VERSION = "1.4.0"
+VERSION = "1.4.1"
 REPO = os.environ.get("WHISPER_REPO", "Tarraf2020/whisperlan")
 UPDATE_URL = f"https://raw.githubusercontent.com/{REPO}/main/VERSION"
 PORT_DEFAULT = 54545
@@ -460,6 +460,12 @@ def warp_notify(title, body, _sink=None):
 
     Old code only called curses.beep() — Warp ships with the audible bell OFF,
     so nobody ever heard anything. Never raises. Off when WHISPER_NOTIFY=off.
+
+    Native osascript/notify-send banner is extra: terminals like Ghostty/iTerm
+    already turn OSC 9 into a proper terminal notification (click focuses the
+    terminal). The osascript duplicate is owned by osascript, so clicking it
+    opens Script Editor instead. Default is now OSC-only (auto); set
+    WHISPER_NATIVE=on to force the old duplicate, =off to force OSC-only.
     """
     if os.environ.get("WHISPER_NOTIFY", "").lower() in ("0", "off", "no", "false", "mute"):
         return
@@ -476,9 +482,22 @@ def warp_notify(title, body, _sink=None):
             break
         except OSError:
             continue
-    term = os.environ.get("TERM_PROGRAM", "")
-    if term != "WarpTerminal" and not any(k.startswith("WARP_") for k in os.environ):
+    native_pref = os.environ.get("WHISPER_NATIVE", "auto").lower()
+    if native_pref in ("0", "off", "no", "false", "mute", "osc", "terminal"):
+        return
+    if native_pref in ("1", "on", "yes", "true", "always", "dual"):
         _native_notify(title, body)
+        return
+    # auto: only use osascript/notify-send when the terminal likely does NOT
+    # turn OSC 9 into a banner itself. Warp uses OSC 777, Ghostty/iTerm/Kitty/
+    # WezTerm handle OSC 9 natively — extra osascript there just duplicates
+    # and mis-routes clicks to Script Editor.
+    term = os.environ.get("TERM_PROGRAM", "")
+    if term == "WarpTerminal" or any(k.startswith("WARP_") for k in os.environ):
+        return
+    if term.lower() in ("ghostty", "iterm.app", "iterm2", "kitty", "wezterm", "wezterm-gui"):
+        return
+    _native_notify(title, body)
 
 
 def summarize_bell(items):
