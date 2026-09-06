@@ -1,8 +1,8 @@
 class Whisperlan < Formula
   desc "Terminal whispers for your LAN: group room + encrypted private 1-on-1s"
   homepage "https://github.com/Tarraf2020/whisperlan"
-  url "https://github.com/Tarraf2020/whisperlan/archive/refs/tags/v1.4.0.tar.gz"
-  sha256 "be77ad4b060e4907af5c661f59c45e7a5303db120da2fb40c3b5683d55fa060d"
+  url "https://github.com/Tarraf2020/whisperlan/archive/refs/tags/v1.4.1.tar.gz"
+  sha256 "ef815da847f1eb11d5d0c5a60480b6faa5ac1aab36ef1f0bf3b3ae36eb728bd0"
   license "MIT"
   depends_on "python@3.13"
 
