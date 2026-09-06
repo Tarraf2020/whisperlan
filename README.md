@@ -83,11 +83,19 @@ You auto-discover each other in ~5 seconds. Flags: `-n` = name, `-p` = room port
 | One private, no switch | `/dm @bob yo` or `@bob yo` |
 | Back to group | `/room` |
 | Rename | `/name newname` |
-| Fun | `/me dances`, `/shrug`, `/flip`, `/unflip`, `/party` |
-| Misc | `/online`, `/clear`, `↑/↓` scroll, `/quit` or `ctrl-C` |
+| Fun | `/me dances`, `/shrug`, `/flip`, `/unflip`, `/party` — work in private chats too |
+| Misc | `/online`, `/clear`, `/notify on|off`, `↑/↓` scroll, `/quit` or `ctrl-C` |
 | 💥 Panic | `/panic` → `/panic yes`: nukes YOUR local history (room + privates + log). Others keep theirs. |
 
-Mention with `@name` in the room → they get a beep. Sidebar shows `(2)` unread badges for privates.
+Mention with `@name` in the room → they get a notification. Sidebar shows `(2)` unread badges for privates.
+
+## 🔔 Notifications (incl. Warp)
+
+Privates, DMs, and `@you` mentions pop a real desktop banner — not just a terminal beep:
+
+- **Warp**: uses Warp's native notification hook (OSC 777), works out of the box. If you also want a *sound*, enable it in Warp: `Settings > Features > Terminal > Audible terminal bell` (+ macOS `System Settings > Notifications > Warp`).
+- **Other terminals**: iTerm2/Ghostty-style banner (OSC 9) + audible `BEL`, plus a native popup via `osascript` (macOS) / `notify-send` (Linux) when available.
+- Toggle anytime inside the app: `/notify off` (mute), `/notify on`. Or permanently: `WHISPER_NOTIFY=off whisper --name ali`.
 
 ## 🔒 How private is private?
 

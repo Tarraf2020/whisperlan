@@ -47,7 +47,7 @@ import threading
 import time
 import uuid
 
-VERSION = "1.3.0"
+VERSION = "1.4.0"
 REPO = os.environ.get("WHISPER_REPO", "Tarraf2020/whisperlan")
 UPDATE_URL = f"https://raw.githubusercontent.com/{REPO}/main/VERSION"
 PORT_DEFAULT = 54545
@@ -413,6 +413,93 @@ def github_update_check(st: "State"):
         pass
 
 
+def _sanitize_osc(s, limit=140):
+    """Warp drops payloads with newlines/semicolons — strip them. Never raises."""
+    s = str(s).replace("\x1b", "").replace("\x07", "").replace("\n", " ").replace("\r", " ").replace(";", ",")
+    s = " ".join(s.split())
+    return s[:limit] or "whisperlan"
+
+
+def build_notify_seqs(title, body):
+    """Pure builder (testable): Warp gets OSC 777 (title+body), everyone else OSC 9 + BEL."""
+    title, body = _sanitize_osc(title, 60), _sanitize_osc(body, 140)
+    term = os.environ.get("TERM_PROGRAM", "")
+    is_warp = term == "WarpTerminal" or any(k.startswith("WARP_") for k in os.environ)
+    if is_warp:
+        return [f"\033]777;notify;{title};{body}\007"]
+    return [f"\033]9;{title}: {body}\007", "\a"]
+
+
+_last_native = 0.0
+
+def _native_notify(title, body):
+    """macOS/Linux desktop banner for non-Warp terminals. Best-effort, max 1 per 5s."""
+    global _last_native
+    now = time.time()
+    if now - _last_native < 5:
+        return
+    _last_native = now
+
+    def _run():
+        try:
+            if os.path.exists("/usr/bin/osascript"):
+                title_q = title.replace('"', "")
+                body_q = body.replace('"', "")
+                subprocess.run(["osascript", "-e",
+                                f'display notification "{body_q}" with title "{title_q}"'],
+                               capture_output=True, timeout=5)
+            elif os.path.exists("/usr/bin/notify-send"):
+                subprocess.run(["notify-send", title, body], capture_output=True, timeout=5)
+        except Exception:
+            pass
+    threading.Thread(target=_run, daemon=True).start()
+
+
+def warp_notify(title, body, _sink=None):
+    """Desktop notification that actually lands in Warp (OSC 777/9 on /dev/tty).
+
+    Old code only called curses.beep() — Warp ships with the audible bell OFF,
+    so nobody ever heard anything. Never raises. Off when WHISPER_NOTIFY=off.
+    """
+    if os.environ.get("WHISPER_NOTIFY", "").lower() in ("0", "off", "no", "false", "mute"):
+        return
+    seqs = build_notify_seqs(title, body)
+    data = "".join(seqs)
+    if _sink is not None:
+        _sink.append(data)
+        return
+    for target in ("/dev/tty", "/dev/stderr"):
+        try:
+            with open(target, "w") as f:
+                f.write(data)
+                f.flush()
+            break
+        except OSError:
+            continue
+    term = os.environ.get("TERM_PROGRAM", "")
+    if term != "WarpTerminal" and not any(k.startswith("WARP_") for k in os.environ):
+        _native_notify(title, body)
+
+
+def summarize_bell(items):
+    """Coalesce bell items (nick str or (nick, preview)) -> (title, body). Pure."""
+    seen = []
+    for it in items:
+        if isinstance(it, (tuple, list)):
+            nick, prev = it[0], it[1] if len(it) > 1 else ""
+        else:
+            nick, prev = it, ""
+        if nick not in [n for n, _ in seen]:
+            seen.append((nick, prev))
+    priv = any(str(p).startswith("🔒") for _, p in seen)
+    title = "whisperlan 🔒" if priv else "whisperlan"
+    parts = [f"{n}: {p}" if p else f"{n} — new message" for n, p in seen[:3]]
+    body = "; ".join(parts)
+    if len(seen) > 3:
+        body += f" (+{len(seen) - 3} more)"
+    return title, body
+
+
 # ----------------------------------------------------------------- ui ---
 
 HELP = """commands:
@@ -420,9 +507,10 @@ HELP = """commands:
   /room                       back to the LAN room
   /dm @name <msg>             one private msg (no view switch)
   /name <name>                change your name (/nick works too)
-  /me <does...>               action, e.g. /me laughs
-  /shrug /flip /unflip /party fun
-  /online                     who's here
+   /me <does...>               action, e.g. /me laughs (works in private too)
+   /shrug /flip /unflip /party fun (works in private too)
+   /notify on|off             desktop notifications (Warp-friendly 🔔)
+   /online                     who's here
   /clear                      wipe current view
   /panic                      NUKE all local history (asks first) 💥
   /help                       this help
@@ -445,7 +533,7 @@ def pump_packets(net: Net, st: State, bell: list):
         if t == "priv":
             st.add_priv(nick, nick, txt)
             st.add("sys", "", f"── 🔒 private from {nick} (/p @{nick} to reply) ──")
-            bell.append(nick)
+            bell.append((nick, f"🔒 {txt[:80]}"))
         elif t == "priv-typing":
             with st.lock:
                 st.priv_typing[nick] = time.time()
@@ -493,12 +581,12 @@ def pump_packets(net: Net, st: State, bell: list):
             st.touch_peer(nick, uid, ip, pport)
             st.add("chat", nick, txt)
             if f"@{st.me}" in txt:
-                bell.append(nick)
+                bell.append((nick, txt[:80]))
         elif t == "dm":
             st.touch_peer(nick, uid, ip, pport)
             if p.get("to") == st.me:
                 st.add("dm", nick, txt)
-                bell.append(nick)
+                bell.append((nick, f"🕵 {txt[:80]}"))
         elif t == "typing":
             with st.lock:
                 st.typing[nick] = time.time()
@@ -690,6 +778,7 @@ def handle_command(cmd, net, st, input_state, stdscr=None):
     if verb == "/dm" and len(parts) >= 3:
         to = parts[1].lstrip("@")
         body = " ".join(parts[2:])[:1000]
+        body = FUN.get(body.strip().lower(), body)  # /dm @bob /shrug sends the art
         res = send_priv_msg(net, st, to, body)
         if res == "tls":
             st.add("sys", "", f"── 🔒 sent privately to {to} ──")
@@ -699,12 +788,41 @@ def handle_command(cmd, net, st, input_state, stdscr=None):
             st.add("sys", "", f"── haven't seen {to} yet. wait for them to join, then retry ──")
         return None
     if verb == "/me":
-        net.send({"type": "me", "text": cmd[3:].strip()[:500] or "vibes"})
-        st.add("me", st.me, cmd[3:].strip()[:500] or "vibes")
+        action = cmd[3:].strip()[:500] or "vibes"
+        if st.view != "room":
+            res = send_priv_msg(net, st, st.view, f"* {st.me} {action}")
+            if res == "offline":
+                st.add("sys", "", f"── {st.view} not here yet — they’ll see room msgs, not this ──")
+            elif res == "broadcast":
+                st.add("sys", "", f"── ⚠️ sent via broadcast (peer on old version) ──")
+        else:
+            net.send({"type": "me", "text": action})
+            st.add("me", st.me, action)
         return None
     if verb in FUN:
-        net.msg(FUN[verb])
-        st.add("chat", st.me, FUN[verb])
+        art = FUN[verb]
+        if st.view != "room":
+            # private view: the art goes 🔒 direct to one person, NOT to the room
+            res = send_priv_msg(net, st, st.view, art)
+            if res == "offline":
+                st.add("sys", "", f"── {st.view} not here yet — they’ll see room msgs, not this ──")
+            elif res == "broadcast":
+                st.add("sys", "", f"── ⚠️ sent via broadcast (peer on old version) ──")
+        else:
+            net.msg(art)
+            st.add("chat", st.me, art)
+        return None
+    if verb == "/notify":
+        arg = parts[1].lower() if len(parts) >= 2 else "status"
+        if arg in ("on", "1", "yes", "unmute"):
+            os.environ.pop("WHISPER_NOTIFY", None)
+            st.add("sys", "", "── 🔔 desktop notifications ON ──")
+        elif arg in ("off", "0", "no", "mute"):
+            os.environ["WHISPER_NOTIFY"] = "off"
+            st.add("sys", "", "── 🔕 desktop notifications OFF ──")
+        else:
+            cur = "OFF" if os.environ.get("WHISPER_NOTIFY", "").lower() in ("0", "off", "no", "false", "mute") else "ON"
+            st.add("sys", "", f"── notifications: {cur} (/notify on|off) ──")
         return None
     if verb == "/clear":
         if st.view == "room":
@@ -786,7 +904,15 @@ def run_tui(net: Net, st: State):
                 scroll_keep = scroll[0] == 0
                 if not scroll_keep: pass
             if bell:
-                stdscr.addstr(0, 0, ""); curses.beep()
+                try: curses.beep()
+                except curses.error: pass
+                try: curses.flash()  # Warp mutes beep by default — flash still shows
+                except curses.error: pass
+                try:
+                    title, body = summarize_bell(bell)
+                    warp_notify(title, body)  # OSC 777/9 -> real Warp desktop banner
+                except Exception:
+                    pass
                 bell.clear()
             if time.time() - last_prune > 5:
                 for d in st.prune():
