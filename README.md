@@ -100,7 +100,7 @@ Mention with `@name` in the room → they get a notification. Sidebar shows `(2)
 Privates, DMs, and `@you` mentions pop a real desktop banner — not just a terminal beep:
 
 - **Warp**: uses Warp's native notification hook (OSC 777), works out of the box. If you also want a *sound*, enable it in Warp: `Settings > Features > Terminal > Audible terminal bell` (+ macOS `System Settings > Notifications > Warp`).
-- **Other terminals**: iTerm2/Ghostty-style banner (OSC 9) + audible `BEL`, plus a native popup via `osascript` (macOS) / `notify-send` (Linux) when available.
+- **Other terminals**: Ghostty/iTerm2/Kitty/WezTerm banner via OSC 9 + audible `BEL` (OSC-only by default, click focuses the terminal). Fallback `osascript` (macOS) / `notify-send` (Linux) only when the terminal likely lacks OSC 9 (e.g. Apple Terminal). Force with `WHISPER_NATIVE=on` (dual) or `WHISPER_NATIVE=off` (OSC-only).
 - Toggle anytime inside the app: `/notify off` (mute), `/notify on`. Or permanently: `WHISPER_NOTIFY=off whisper --name ali`.
 
 ## 🔒 How private is private?
