@@ -91,7 +91,7 @@ You auto-discover each other in ~5 seconds. Flags: `-n` = name, `-p` = room port
 | Rename | `/name newname` |
 | Fun | `/me dances`, `/shrug`, `/flip`, `/unflip`, `/party` — work in private chats too |
 | Misc | `/online`, `/clear`, `/notify on|off`, `↑/↓` scroll, `/quit` or `ctrl-C` |
-| 💥 Panic | `/panic` → `/panic yes`: nukes YOUR local history (room + privates + log). Others keep theirs. |
+| 💥 Panic | `/panic` → `/panic yes`: nukes YOUR session history (room + privates, memory only — nothing is ever written to disk). Others keep theirs. |
 
 Mention with `@name` in the room → they get a notification. Sidebar shows `(2)` unread badges for privates.
 
@@ -105,11 +105,12 @@ Privates, DMs, and `@you` mentions pop a real desktop banner — not just a term
 
 ## 🔒 How private is private?
 
-- **Room** = UDP broadcast to `255.255.255.255:54545`. Everyone running whisper on that port sees it. Wireshark sees it. Party banter only.
+- **Room** = encrypted mesh 🔒: one TLS-encrypted TCP unicast per peer, never broadcast. Passive sniffers see connection metadata at most, never content. Needs v1.5.0+ on both ends — old peers are skipped with a warning.
 - **Private** = direct TLS-encrypted TCP to one peer (`port+1` by default, auto-bumped if busy). Cert self-generates once via system `openssl` → `~/.whisper-cert.pem`. Passive sniffers see gibberish.
-- Honest limit: self-signed = TOFU, no CA, so a skilled *active* LAN attacker could MITM. Don't send bank passwords. 😉
+- **Presence stays public**: `hello / heartbeat / bye / typing` are still plaintext broadcast (nick + IP + ports, no chat content). A sniffer sees who's online, not what they say.
+- Honest limit: self-signed = TOFU, no CA, so a skilled *active* LAN attacker could MITM. No `openssl` on the machine = plain-TCP fallback (still unicast, still sniffable). Don't send bank passwords. 😉
 
-Packet shape: JSON `{v, id, type, from, uid, to?, text, ts, ip, pport}`, types `hello / heartbeat / bye / msg / dm / typing / rename / me / priv / priv-typing`. Heartbeat 5s, timeout 15s. History → `~/.whisper.log`.
+Packet shape: JSON `{v, id, type, from, uid, to?, text, ts, ip, pport, mesh?}`, types `hello / heartbeat / bye / msg / dm / typing / rename / me / priv / priv-typing / room / room-me` (`msg/me/dm` = legacy ≤1.4.x receive path only). Heartbeat 5s, timeout 15s. No chat history is written to disk — quit and the session is gone.
 
 ## 🛠 Troubleshooting
 

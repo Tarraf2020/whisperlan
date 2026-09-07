@@ -47,11 +47,10 @@ import threading
 import time
 import uuid
 
-VERSION = "1.4.1"
+VERSION = "1.5.0"
 REPO = os.environ.get("WHISPER_REPO", "Tarraf2020/whisperlan")
 UPDATE_URL = f"https://raw.githubusercontent.com/{REPO}/main/VERSION"
 PORT_DEFAULT = 54545
-LOG_PATH = os.path.expanduser("~/.whisper.log")
 BROADCAST = "255.255.255.255"
 HEARTBEAT_EVERY = 5
 PEER_TIMEOUT = 15
@@ -80,7 +79,14 @@ COLORS = [  # curses color pairs assigned per-user by hash
 # ---------------------------------------------------------------- net ---
 
 class Net:
-    """UDP broadcast for the room + TLS-encrypted TCP for private 1-on-1s."""
+    """Presence over UDP broadcast + everything with content over TLS-encrypted TCP.
+
+    hello/heartbeat/bye/rename/typing stay broadcast (no chat content, only
+    nick/ip/port/version — still visible to LAN sniffers as presence metadata).
+    Room chat ("room"/"room-me") is fanned out as one TLS unicast per peer
+    (mesh); privates stay 1-to-1 TLS. No chat content ever hits broadcast.
+    Nothing is written to disk — quit and the session is gone.
+    """
     def __init__(self, nick, port, pport=None):
         self.nick = nick
         self.port = port
@@ -236,10 +242,10 @@ class Net:
         except OSError:
             pass
 
-    def hello(self):      self.send({"type": "hello", "ip": self.local_ip, "pport": self.pport, "appv": VERSION})
-    def heartbeat(self):  self.send({"type": "heartbeat", "ip": self.local_ip, "pport": self.pport, "appv": VERSION})
+    def hello(self):      self.send({"type": "hello", "ip": self.local_ip, "pport": self.pport, "appv": VERSION, "mesh": True})
+    def heartbeat(self):  self.send({"type": "heartbeat", "ip": self.local_ip, "pport": self.pport, "appv": VERSION, "mesh": True})
     def bye(self):        self.send({"type": "bye"})
-    def msg(self, text):  self.send({"type": "msg", "text": text})
+    def msg(self, text):  self.send({"type": "msg", "text": text})  # legacy plaintext broadcast — no longer used for sends (see send_room); kept for receiving ≤1.4.x peers
     def dm(self, to, text): self.send({"type": "dm", "to": to, "text": text})  # legacy broadcast DM
     def typing(self):     self.send({"type": "typing"})
 
@@ -247,7 +253,7 @@ class Net:
         old = self.nick
         self.nick = new_nick
         self.send({"type": "rename", "old": old, "new": new_nick,
-                   "ip": self.local_ip, "pport": self.pport})
+                   "ip": self.local_ip, "pport": self.pport, "mesh": True})
 
     def listen_loop(self):
         while self.running:
@@ -295,7 +301,7 @@ class State:
         self.newest = {"v": None, "by": None}  # newest peer version seen (update nudge)
         self.lock = threading.Lock()
 
-    def touch_peer(self, nick, uid, ip, pport=None):
+    def touch_peer(self, nick, uid, ip, pport=None, mesh=False, appv=""):
         with self.lock:
             old_nick = self.uid2nick.get(uid)
             if old_nick and old_nick != nick:
@@ -310,6 +316,8 @@ class State:
             prev = self.peers.get(nick, {})
             self.peers[nick] = {"uid": uid, "ip": ip or prev.get("ip", "?"),
                                 "pport": pport or prev.get("pport"),
+                                "mesh": mesh or prev.get("mesh", False),
+                                "appv": appv or prev.get("appv", ""),
                                 "last": time.time()}
 
     def peer(self, nick):
@@ -533,8 +541,9 @@ HELP = """commands:
   /clear                      wipe current view
   /panic                      NUKE all local history (asks first) 💥
   /help                       this help
-  /quit                       slip away
-in private: just type — it goes 🔒 direct (TLS) to one person, nobody else gets it."""
+   /quit                       slip away
+ room = encrypted mesh 🔒 (one TLS unicast per peer, never broadcast).
+ in private: just type — it goes 🔒 direct (TLS) to one person, nobody else gets it."""
 
 def pump_packets(net: Net, st: State, bell: list):
     """Drain inbox queues -> state. Returns True if anything changed."""
@@ -556,6 +565,17 @@ def pump_packets(net: Net, st: State, bell: list):
         elif t == "priv-typing":
             with st.lock:
                 st.priv_typing[nick] = time.time()
+        elif t == "room":
+            # mesh room message: one TLS unicast per peer, never broadcast
+            st.touch_peer(nick, p.get("uid", "?"), p.get("ip", "?"), p.get("pport"),
+                          mesh=True, appv=str(p.get("appv", "") or "")[:16])
+            st.add("chat", nick, txt)
+            if f"@{st.me}" in txt:
+                bell.append((nick, txt[:80]))
+        elif t == "room-me":
+            st.touch_peer(nick, p.get("uid", "?"), p.get("ip", "?"), p.get("pport"),
+                          mesh=True, appv=str(p.get("appv", "") or "")[:16])
+            st.add("me", nick, txt)
     while True:
         try:
             p = net.inbox.get_nowait()
@@ -571,7 +591,8 @@ def pump_packets(net: Net, st: State, bell: list):
 
         if t in ("hello", "heartbeat"):
             known = nick in dict(st.online())
-            st.touch_peer(nick, uid, ip, pport)
+            st.touch_peer(nick, uid, ip, pport, mesh=bool(p.get("mesh")),
+                          appv=str(p.get("appv", "") or "")[:16])
             pv = str(p.get("appv", "") or "")[:16]
             if pv and vnewer(pv, VERSION):
                 with st.lock:
@@ -586,6 +607,8 @@ def pump_packets(net: Net, st: State, bell: list):
             if t == "hello" and not known:
                 lock = "🔒" if pport else ""
                 st.add("sys", "", f"── {nick} joined from {ip} {lock} ──")
+                if not p.get("mesh"):
+                    st.add("sys", "", f"── ⚠️ {nick} runs old whisperlan (no room encryption) — they can't read your encrypted room msgs ──")
         elif t == "bye":
             st.remove_peer(nick)
             st.add("sys", "", f"── {nick} slipped away ──")
@@ -630,7 +653,33 @@ def send_priv_msg(net: Net, st: State, to: str, text: str) -> str:
     return "broadcast" if known else "offline"
 
 
-def draw(stdscr, st: State, net: Net, input_buf, scroll, logf):
+def send_room(net: Net, st: State, text: str, mtype="room") -> tuple:
+    """Mesh room send: one (TLS-)TCP unicast per mesh-capable peer, in a
+    background thread (connects can block; never stall the TUI).
+
+    Nothing is broadcast — passive LAN sniffers see connection metadata at
+    most, never content. Legacy (≤1.4.x) peers are skipped: they can't read
+    mesh packets (warned at join time). Returns (mesh_targets, legacy_skipped).
+    """
+    with st.lock:
+        targets = [(n, dict(p)) for n, p in st.peers.items()]
+    mesh_targets = [(n, p) for n, p in targets
+                    if p.get("mesh") and p.get("ip") not in (None, "?") and p.get("pport")]
+    legacy = len(targets) - len(mesh_targets)
+    pkt = {"type": mtype, "text": text, "ip": net.local_ip, "pport": net.pport,
+           "appv": VERSION, "mesh": True}
+
+    def _fanout():
+        for _, p in mesh_targets:
+            try:
+                net.send_private(p["ip"], p["pport"], dict(pkt))
+            except Exception:
+                pass
+    threading.Thread(target=_fanout, daemon=True).start()
+    return len(mesh_targets), legacy
+
+
+def draw(stdscr, st: State, net: Net, input_buf, scroll):
     h, w = stdscr.getmaxyx()
     stdscr.erase()
     sidebar_w = min(26, max(18, w // 4)) if w > 80 else 0
@@ -650,7 +699,7 @@ def draw(stdscr, st: State, net: Net, input_buf, scroll, logf):
     n_online = len(st.online()) + 1
     if view == "room":
         title = f" 🤫 whisper  │  room: lan  │  {n_online} online  │  {st.me}@{socket.gethostname()} "
-        hint = " type to broadcast │ /p @name for private 🔒 │ /help "
+        hint = " type + enter to send 🔒 │ /p @name for private │ /help "
     else:
         lock = "🔒 TLS" if net.tls else "🔒"
         title = f" 🤫 whisper  │  {lock} private with {view}  │  /room to go back  │  {st.me} "
@@ -815,7 +864,7 @@ def handle_command(cmd, net, st, input_state, stdscr=None):
             elif res == "broadcast":
                 st.add("sys", "", f"── ⚠️ sent via broadcast (peer on old version) ──")
         else:
-            net.send({"type": "me", "text": action})
+            send_room(net, st, action, "room-me")
             st.add("me", st.me, action)
         return None
     if verb in FUN:
@@ -828,7 +877,7 @@ def handle_command(cmd, net, st, input_state, stdscr=None):
             elif res == "broadcast":
                 st.add("sys", "", f"── ⚠️ sent via broadcast (peer on old version) ──")
         else:
-            net.msg(art)
+            send_room(net, st, art)
             st.add("chat", st.me, art)
         return None
     if verb == "/notify":
@@ -870,16 +919,11 @@ def handle_command(cmd, net, st, input_state, stdscr=None):
                 st.priv_typing.clear()
                 st.view = "room"
                 st.panic_armed_at = 0
-            try:
-                open(LOG_PATH, "w").close()  # nuke the on-disk log too
-                disk = "memory + log file wiped"
-            except OSError:
-                disk = "memory wiped (log file locked — delete ~/.whisper.log by hand)"
-            st.add("sys", "", f"── 💥 panic done. {disk}. nobody was notified. breathe. ──")
+            st.add("sys", "", "── 💥 panic done. memory wiped (nothing was ever written to disk). breathe. ──")
             return "panicked"
         with st.lock:
             st.panic_armed_at = now
-        st.add("sys", "", "── ⚠️ /panic wipes ALL local history: room + every private + ~/.whisper.log ──")
+        st.add("sys", "", "── ⚠️ /panic wipes ALL session history: room + every private (memory only, nothing on disk) ──")
         st.add("sys", "", "── this only wipes YOUR machine. others keep their copies. ──")
         st.add("sys", "", "── sure? type  /panic yes  within 30s ──")
         return None
@@ -894,7 +938,6 @@ def run_tui(net: Net, st: State):
     bell = []
     scroll = [0]
     input_buf = ["", 0]  # [text, cursor]
-    logf = open(LOG_PATH, "a")
 
     def loop(stdscr):
         curses.curs_set(1)
@@ -913,7 +956,7 @@ def run_tui(net: Net, st: State):
         last_prune = time.time()
 
         st.add("sys", "", "── 🤫 welcome to whisper. softly shouting HELLO to the LAN… ──")
-        st.add("sys", "", "── room = everyone. /p @name = encrypted private 🔒 ──")
+        st.add("sys", "", "── room = encrypted mesh 🔒. /p @name = private 1-on-1 🔒 ──")
         for ln in HELP.splitlines(): st.add("sys", "", ln)
         net.hello()
         threading.Thread(target=github_update_check, args=(st,), daemon=True).start()
@@ -940,7 +983,7 @@ def run_tui(net: Net, st: State):
                         st.add("sys", "", f"── {d} left… /room to go back ──")
                 last_prune = time.time()
 
-            draw(stdscr, st, net, input_buf, scroll, logf)
+            draw(stdscr, st, net, input_buf, scroll)
 
             try: ch = stdscr.get_wch()
             except curses.error: continue
@@ -959,17 +1002,15 @@ def run_tui(net: Net, st: State):
                     if res in ("switched", "panicked"):
                         scroll[0] = 0
                     continue
-                # plain text: private view -> encrypted direct, room -> broadcast
+                # plain text: private view -> encrypted direct, room -> encrypted mesh
                 if st.view != "room":
                     to = st.view
-                    logf.write(f"[{fmt_time(time.time())}] {st.me} 🔒→{to}: {line}\n"); logf.flush()
                     res = send_priv_msg(net, st, to, line)
                     if res == "offline":
                         st.add("sys", "", f"── {to} not here yet — they’ll see room msgs, not this ──")
                     elif res == "broadcast":
                         st.add("sys", "", f"── ⚠️ sent via broadcast (peer on old version) ──")
                 else:
-                    logf.write(f"[{fmt_time(time.time())}] {st.me}: {line}\n"); logf.flush()
                     if line.startswith("@"):
                         # "@bob hello" shortcut = private without switching
                         sp = line.split(None, 1)
@@ -978,8 +1019,8 @@ def run_tui(net: Net, st: State):
                             if res == "tls":
                                 st.add("sys", "", f"── 🔒 sent privately to {sp[0].lstrip('@')} ──")
                                 continue
-                            # fall through to broadcast if offline
-                    net.msg(line)
+                            # fall through to mesh if offline
+                    send_room(net, st, line)
                     st.add("chat", st.me, line)
             elif ch in (curses.KEY_BACKSPACE, "\x7f", "\b", "\x08"):
                 if cur > 0:
@@ -1008,7 +1049,7 @@ def run_tui(net: Net, st: State):
     try:
         curses.wrapper(loop)
     finally:
-        logf.close()
+        pass
 
 
 def main():
