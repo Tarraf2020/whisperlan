@@ -47,7 +47,7 @@ import threading
 import time
 import uuid
 
-VERSION = "1.5.0"
+VERSION = "1.5.1"
 REPO = os.environ.get("WHISPER_REPO", "Tarraf2020/whisperlan")
 UPDATE_URL = f"https://raw.githubusercontent.com/{REPO}/main/VERSION"
 PORT_DEFAULT = 54545
@@ -393,6 +393,17 @@ def fetch_latest_version(timeout=6):
         return None
 
 
+def upgrade_hint() -> str:
+    """Right update command for how this copy was installed. Never raises."""
+    try:
+        here = os.path.abspath(__file__ or "")
+        if "Cellar" in here or "homebrew" in here.lower():
+            return "brew upgrade whisperlan"
+    except Exception:
+        pass
+    return f"curl -fsSL https://raw.githubusercontent.com/{REPO}/main/install.sh | bash"
+
+
 def github_update_check(st: "State"):
     """Background, cached (24h), silent when offline. Drops a 🔔 line if you're behind."""
     try:
@@ -416,7 +427,7 @@ def github_update_check(st: "State"):
                     pass
         if latest and vnewer(latest, VERSION):
             st.add("sys", "", f"── 🔔 whisperlan v{latest} is out (you're on v{VERSION}) ──")
-            st.add("sys", "", f"── update: curl -fsSL https://raw.githubusercontent.com/{REPO}/main/install.sh | bash ──")
+            st.add("sys", "", f"── update: {upgrade_hint()} ──")
     except Exception:
         pass
 
@@ -603,7 +614,7 @@ def pump_packets(net: Net, st: State, bell: list):
                     else:
                         fresh = False
                 if fresh:
-                    st.add("sys", "", f"── 🔔 {nick} runs whisperlan v{pv} (you: v{VERSION}) — update when you can ──")
+                    st.add("sys", "", f"── 🔔 {nick} runs whisperlan v{pv} (you: v{VERSION}) — update: {upgrade_hint()} ──")
             if t == "hello" and not known:
                 lock = "🔒" if pport else ""
                 st.add("sys", "", f"── {nick} joined from {ip} {lock} ──")
