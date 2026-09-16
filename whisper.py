@@ -47,7 +47,7 @@ import threading
 import time
 import uuid
 
-VERSION = "1.5.1"
+VERSION = "1.5.2"
 REPO = os.environ.get("WHISPER_REPO", "Tarraf2020/whisperlan")
 UPDATE_URL = f"https://raw.githubusercontent.com/{REPO}/main/VERSION"
 PORT_DEFAULT = 54545
@@ -210,7 +210,7 @@ class Net:
             try: conn.close()
             except OSError: pass
 
-    def send_private(self, ip, pport, pkt: dict) -> bool:
+    def send_private(self, ip, pport, pkt: dict, timeout=5) -> bool:
         """Unicast one packet over (TLS-)TCP. Returns True if delivered."""
         pkt.setdefault("v", 1)
         pkt.setdefault("id", uuid.uuid4().hex[:8])
@@ -219,7 +219,7 @@ class Net:
         pkt.setdefault("ts", time.time())
         data = (json.dumps(pkt) + "\n").encode()
         try:
-            raw = socket.create_connection((ip, int(pport)), timeout=5)
+            raw = socket.create_connection((ip, int(pport)), timeout=timeout)
             try:
                 if self.tls:
                     raw = self._client_ctx().wrap_socket(raw)
@@ -520,18 +520,32 @@ def warp_notify(title, body, _sink=None):
 
 
 def summarize_bell(items):
-    """Coalesce bell items (nick str or (nick, preview)) -> (title, body). Pure."""
-    seen = []
+    """Coalesce bell items -> (title, body). Pure. Never includes message content.
+
+    Items are nick strings or (nick, kind) tuples with kind in {"priv", "mention"}.
+    Legacy (nick, preview) tuples are accepted but the preview is dropped — the
+    banner shows who wrote, never what they wrote (shoulder-surf safe).
+    """
+    seen = []  # [(nick, kind)]
     for it in items:
         if isinstance(it, (tuple, list)):
-            nick, prev = it[0], it[1] if len(it) > 1 else ""
+            nick = it[0]
+            kind = it[1] if len(it) > 1 else ""
+            kind = kind if kind in ("priv", "mention") else ""
         else:
-            nick, prev = it, ""
+            nick, kind = it, ""
         if nick not in [n for n, _ in seen]:
-            seen.append((nick, prev))
-    priv = any(str(p).startswith("🔒") for _, p in seen)
+            seen.append((nick, kind))
+    priv = any(k == "priv" for _, k in seen)
     title = "whisperlan 🔒" if priv else "whisperlan"
-    parts = [f"{n}: {p}" if p else f"{n} — new message" for n, p in seen[:3]]
+    parts = []
+    for n, k in seen[:3]:
+        if k == "priv":
+            parts.append(f"Private message from {n}")
+        elif k == "mention":
+            parts.append(f"Mentioned by {n} in room")
+        else:
+            parts.append(f"New message from {n}")
     body = "; ".join(parts)
     if len(seen) > 3:
         body += f" (+{len(seen) - 3} more)"
@@ -571,8 +585,10 @@ def pump_packets(net: Net, st: State, bell: list):
         txt = str(p.get("text", ""))[:1000]
         if t == "priv":
             st.add_priv(nick, nick, txt)
-            st.add("sys", "", f"── 🔒 private from {nick} (/p @{nick} to reply) ──")
-            bell.append((nick, f"🔒 {txt[:80]}"))
+            # private activity stays in the private thread only — nothing is
+            # written to room lines, so the room view never reveals privates.
+            st.add_priv(nick, "sys", f"── 🔒 private message arrived — type to reply, /room to exit ──")
+            bell.append((nick, "priv"))
         elif t == "priv-typing":
             with st.lock:
                 st.priv_typing[nick] = time.time()
@@ -582,7 +598,7 @@ def pump_packets(net: Net, st: State, bell: list):
                           mesh=True, appv=str(p.get("appv", "") or "")[:16])
             st.add("chat", nick, txt)
             if f"@{st.me}" in txt:
-                bell.append((nick, txt[:80]))
+                bell.append((nick, "mention"))
         elif t == "room-me":
             st.touch_peer(nick, p.get("uid", "?"), p.get("ip", "?"), p.get("pport"),
                           mesh=True, appv=str(p.get("appv", "") or "")[:16])
@@ -634,12 +650,12 @@ def pump_packets(net: Net, st: State, bell: list):
             st.touch_peer(nick, uid, ip, pport)
             st.add("chat", nick, txt)
             if f"@{st.me}" in txt:
-                bell.append((nick, txt[:80]))
+                bell.append((nick, "mention"))
         elif t == "dm":
             st.touch_peer(nick, uid, ip, pport)
             if p.get("to") == st.me:
                 st.add("dm", nick, txt)
-                bell.append((nick, f"🕵 {txt[:80]}"))
+                bell.append((nick, "priv"))
         elif t == "typing":
             with st.lock:
                 st.typing[nick] = time.time()
@@ -649,24 +665,46 @@ def pump_packets(net: Net, st: State, bell: list):
 
 
 def send_priv_msg(net: Net, st: State, to: str, text: str) -> str:
-    """Try encrypted TCP direct. Fallback to legacy broadcast DM. Returns 'tls'|'broadcast'|'offline'."""
+    """Deliver one private msg over encrypted TCP direct. Returns 'tls'|'offline'.
+
+    Fail-closed: if the peer is unreachable (or on an old version without a
+    private port), the message is NOT sent anywhere — it never falls back to
+    broadcast, so the room can neither read it nor observe that it exists.
+    """
     peer = st.peer(to)
     ip, pport = peer.get("ip"), peer.get("pport")
     if ip and ip != "?" and pport:
-        if net.send_private(ip, pport, {"type": "priv", "to": to, "text": text}):
+        if net.send_private(ip, pport, {"type": "priv", "to": to, "text": text}, timeout=3):
             st.add_priv(to, "you", text)
             return "tls"
-    # fallback: legacy broadcast DM (warn: not truly private)
-    net.dm(to, text)
-    st.add_priv(to, "you", text + "  (sent via broadcast — peer offline or old version ⚠️)")
-    with st.lock:
-        known = to in st.peers
-    return "broadcast" if known else "offline"
+    return "offline"
+
+
+# Outstanding room-fanout threads, joined briefly on quit so the last
+# messages still go out instead of dying with the daemon threads.
+_FANOUT = []
+_FANOUT_LOCK = threading.Lock()
+
+
+def flush_fanout(timeout=1.0):
+    """Wait (bounded) for in-flight room sends. Never raises."""
+    try:
+        with _FANOUT_LOCK:
+            pending = list(_FANOUT)
+        end = time.time() + timeout
+        for th in pending:
+            th.join(max(0, end - time.time()))
+    except Exception:
+        pass
 
 
 def send_room(net: Net, st: State, text: str, mtype="room") -> tuple:
-    """Mesh room send: one (TLS-)TCP unicast per mesh-capable peer, in a
-    background thread (connects can block; never stall the TUI).
+    """Mesh room send: one (TLS-)TCP unicast per mesh-capable peer.
+
+    Each peer gets its own sender thread (short connect timeout), so one
+    dead/stale peer can never stall delivery to the rest or make rapid
+    sends pile up behind it. Unreachable peers are reported once via a
+    reaper notice instead of failing silently.
 
     Nothing is broadcast — passive LAN sniffers see connection metadata at
     most, never content. Legacy (≤1.4.x) peers are skipped: they can't read
@@ -679,18 +717,50 @@ def send_room(net: Net, st: State, text: str, mtype="room") -> tuple:
     legacy = len(targets) - len(mesh_targets)
     pkt = {"type": mtype, "text": text, "ip": net.local_ip, "pport": net.pport,
            "appv": VERSION, "mesh": True}
+    failures = []
+    fail_lock = threading.Lock()
 
-    def _fanout():
-        for _, p in mesh_targets:
-            try:
-                net.send_private(p["ip"], p["pport"], dict(pkt))
-            except Exception:
-                pass
-    threading.Thread(target=_fanout, daemon=True).start()
+    def _one(nick, peer):
+        try:
+            ok = net.send_private(peer["ip"], peer["pport"], dict(pkt), timeout=3)
+        except Exception:
+            ok = False
+        if not ok:
+            with fail_lock:
+                failures.append(nick)
+
+    workers = []
+    for nick, peer in mesh_targets:
+        th = threading.Thread(target=_one, args=(nick, peer), daemon=True)
+        th.start()
+        workers.append(th)
+    with _FANOUT_LOCK:
+        _FANOUT.extend(workers)
+        del _FANOUT[:-50]  # bounded bookkeeping
+
+    def _reap():
+        end = time.time() + 4
+        for th in workers:
+            th.join(max(0, end - time.time()))
+        with fail_lock:
+            # workers still hanging past the delivery window count as failed
+            # too (their result arrives too late to matter to the user).
+            for (nick, _peer), th in zip(mesh_targets, workers):
+                if th.is_alive() and nick not in failures:
+                    failures.append(nick)
+        with _FANOUT_LOCK:
+            for th in workers:
+                try: _FANOUT.remove(th)
+                except ValueError: pass
+        if failures:
+            names = ", ".join(sorted(set(failures))[:3])
+            extra = f" (+{len(set(failures)) - 3} more)" if len(set(failures)) > 3 else ""
+            st.add("sys", "", f"── couldn't reach {names}{extra} — they may have left, retry if it matters ──")
+    threading.Thread(target=_reap, daemon=True).start()
     return len(mesh_targets), legacy
 
 
-def draw(stdscr, st: State, net: Net, input_buf, scroll):
+def draw(stdscr, st: State, net: Net, input_buf, scrolls):
     h, w = stdscr.getmaxyx()
     stdscr.erase()
     sidebar_w = min(26, max(18, w // 4)) if w > 80 else 0
@@ -740,14 +810,22 @@ def draw(stdscr, st: State, net: Net, input_buf, scroll):
     else:
         wrapped.append(("sys", f" ── 🔒 encrypted private with {view} — only you two get these ── "))
         for ts, who, text in priv_thread:
+            if who == "sys":
+                wrapped.append(("sys", f" {text}"))
+                continue
             stamp = fmt_time(ts)
             tag = "you" if who == "you" else view
             for ln in textwrap.wrap(text, width=max(20, main_w - len(tag) - len(stamp) - 6)) or [""]:
                 wrapped.append(("priv", (stamp, tag, ln, who == "you")))
 
+    # per-view scroll offset from bottom (0 = pinned to newest). Each view
+    # keeps its own position, so reading private history never moves the room
+    # and vice versa. While scrolled up, new arrivals don't yank the view.
+    skey = view if view != "room" else "room"
     max_scroll = max(0, len(wrapped) - msg_h)
-    scroll[0] = max(0, min(scroll[0], max_scroll))
-    vis = wrapped[len(wrapped) - msg_h - scroll[0]: len(wrapped) - scroll[0] if scroll[0] else len(wrapped)]
+    sc = max(0, min(int(scrolls.get(skey, 0)), max_scroll))
+    scrolls[skey] = sc
+    vis = wrapped[len(wrapped) - msg_h - sc: len(wrapped) - sc if sc else len(wrapped)]
 
     y = top_h + 1
     for item in vis:
@@ -861,19 +939,15 @@ def handle_command(cmd, net, st, input_state, stdscr=None):
         res = send_priv_msg(net, st, to, body)
         if res == "tls":
             st.add("sys", "", f"── 🔒 sent privately to {to} ──")
-        elif res == "broadcast":
-            st.add("sys", "", f"── ⚠️ {to} on old version/offline — sent via broadcast ──")
         else:
-            st.add("sys", "", f"── haven't seen {to} yet. wait for them to join, then retry ──")
+            st.add("sys", "", f"── couldn't deliver privately to {to} — not sent, nothing was broadcast ──")
         return None
     if verb == "/me":
         action = cmd[3:].strip()[:500] or "vibes"
         if st.view != "room":
             res = send_priv_msg(net, st, st.view, f"* {st.me} {action}")
             if res == "offline":
-                st.add("sys", "", f"── {st.view} not here yet — they’ll see room msgs, not this ──")
-            elif res == "broadcast":
-                st.add("sys", "", f"── ⚠️ sent via broadcast (peer on old version) ──")
+                st.add("sys", "", f"── couldn't deliver privately to {st.view} — not sent, nothing was broadcast ──")
         else:
             send_room(net, st, action, "room-me")
             st.add("me", st.me, action)
@@ -884,9 +958,7 @@ def handle_command(cmd, net, st, input_state, stdscr=None):
             # private view: the art goes 🔒 direct to one person, NOT to the room
             res = send_priv_msg(net, st, st.view, art)
             if res == "offline":
-                st.add("sys", "", f"── {st.view} not here yet — they’ll see room msgs, not this ──")
-            elif res == "broadcast":
-                st.add("sys", "", f"── ⚠️ sent via broadcast (peer on old version) ──")
+                st.add("sys", "", f"── couldn't deliver privately to {st.view} — not sent, nothing was broadcast ──")
         else:
             send_room(net, st, art)
             st.add("chat", st.me, art)
@@ -947,7 +1019,7 @@ def handle_command(cmd, net, st, input_state, stdscr=None):
 
 def run_tui(net: Net, st: State):
     bell = []
-    scroll = [0]
+    scrolls = {}  # view key ("room" or priv nick) -> offset from bottom
     input_buf = ["", 0]  # [text, cursor]
 
     def loop(stdscr):
@@ -973,14 +1045,15 @@ def run_tui(net: Net, st: State):
         threading.Thread(target=github_update_check, args=(st,), daemon=True).start()
 
         while True:
-            if pump_packets(net, st, bell):
-                scroll_keep = scroll[0] == 0
-                if not scroll_keep: pass
+            pump_packets(net, st, bell)
+            # NOTE: scroll offsets are intentionally left alone here — pinned
+            # views (offset 0) follow new messages via draw(), scrolled-up
+            # views keep their place instead of being yanked to the bottom.
             if bell:
                 try: curses.beep()
                 except curses.error: pass
-                try: curses.flash()  # Warp mutes beep by default — flash still shows
-                except curses.error: pass
+                # no curses.flash(): it blanks the whole screen on every
+                # message — the OSC desktop banner already covers Warp.
                 try:
                     title, body = summarize_bell(bell)
                     warp_notify(title, body)  # OSC 777/9 -> real Warp desktop banner
@@ -994,43 +1067,46 @@ def run_tui(net: Net, st: State):
                         st.add("sys", "", f"── {d} left… /room to go back ──")
                 last_prune = time.time()
 
-            draw(stdscr, st, net, input_buf, scroll)
+            draw(stdscr, st, net, input_buf, scrolls)
 
             try: ch = stdscr.get_wch()
             except curses.error: continue
             if ch is None: continue
 
             text, cur = input_buf
-            if isinstance(ch, str) and ch in ("\n", "\r"):
+            # Some terminals deliver Enter as KEY_ENTER (343) instead of "\n"
+            # when keypad mode is on — accept both so messages always send.
+            if (isinstance(ch, str) and ch in ("\n", "\r")) or ch == curses.KEY_ENTER:
                 line = text.strip()
                 input_buf[0], input_buf[1] = "", 0
-                scroll[0] = 0
                 if not line: continue
                 if line.startswith("/"):
                     res = handle_command(line, net, st, input_buf)
                     if res == "quit":
                         break
                     if res in ("switched", "panicked"):
-                        scroll[0] = 0
+                        scrolls[st.view] = 0
                     continue
                 # plain text: private view -> encrypted direct, room -> encrypted mesh
                 if st.view != "room":
                     to = st.view
                     res = send_priv_msg(net, st, to, line)
                     if res == "offline":
-                        st.add("sys", "", f"── {to} not here yet — they’ll see room msgs, not this ──")
-                    elif res == "broadcast":
-                        st.add("sys", "", f"── ⚠️ sent via broadcast (peer on old version) ──")
+                        st.add("sys", "", f"── couldn't deliver privately to {to} — not sent, nothing was broadcast ──")
                 else:
                     if line.startswith("@"):
-                        # "@bob hello" shortcut = private without switching
+                        # "@bob hello" shortcut = private without switching.
+                        # Never fall through to the room: text meant for one
+                        # person must not end up visible to everyone.
                         sp = line.split(None, 1)
                         if len(sp) == 2 and sp[0].lstrip("@"):
-                            res = send_priv_msg(net, st, sp[0].lstrip("@"), sp[1])
+                            who = sp[0].lstrip("@")
+                            res = send_priv_msg(net, st, who, sp[1])
                             if res == "tls":
-                                st.add("sys", "", f"── 🔒 sent privately to {sp[0].lstrip('@')} ──")
-                                continue
-                            # fall through to mesh if offline
+                                st.add("sys", "", f"── 🔒 sent privately to {who} ──")
+                            else:
+                                st.add("sys", "", f"── couldn't deliver privately to {who} — NOT posted to the room, retry when they're back ──")
+                            continue
                     send_room(net, st, line)
                     st.add("chat", st.me, line)
             elif ch in (curses.KEY_BACKSPACE, "\x7f", "\b", "\x08"):
@@ -1039,8 +1115,24 @@ def run_tui(net: Net, st: State):
                     input_buf[1] = cur - 1
             elif ch == curses.KEY_LEFT:  input_buf[1] = max(0, cur - 1)
             elif ch == curses.KEY_RIGHT: input_buf[1] = min(len(text), cur + 1)
-            elif ch == curses.KEY_UP:    scroll[0] = min(scroll[0] + 1, 500)
-            elif ch == curses.KEY_DOWN:  scroll[0] = max(scroll[0] - 1, 0)
+            elif ch in (curses.KEY_UP, curses.KEY_DOWN,
+                        curses.KEY_PPAGE, curses.KEY_NPAGE,
+                        curses.KEY_HOME, curses.KEY_END):
+                # per-view history scroll: Up/Down = 3 lines, PgUp/PgDn = page,
+                # Home = oldest, End = newest (pinned). Never touches the
+                # other view's position.
+                try: _hh, _ = stdscr.getmaxyx()
+                except curses.error: _hh = 24
+                page = max(1, _hh - 6)
+                skey = st.view if st.view != "room" else "room"
+                cur_sc = int(scrolls.get(skey, 0))
+                if ch == curses.KEY_UP:    cur_sc = min(cur_sc + 3, 500)
+                elif ch == curses.KEY_DOWN: cur_sc = max(cur_sc - 3, 0)
+                elif ch == curses.KEY_PPAGE: cur_sc = min(cur_sc + page, 500)
+                elif ch == curses.KEY_NPAGE: cur_sc = max(cur_sc - page, 0)
+                elif ch == curses.KEY_HOME:  cur_sc = 500  # clamped in draw()
+                elif ch == curses.KEY_END:   cur_sc = 0
+                scrolls[skey] = cur_sc
             elif ch == "\x15":  # ctrl-U clear line
                 input_buf[0], input_buf[1] = "", 0
             elif ch == "\x03":  # ctrl-C
@@ -1085,7 +1177,7 @@ def main():
 
     print("\n".join(BANNER))
     print(f"\n  🤫 whisperlan {VERSION}  ·  you are: {nick}  ·  room port: {args.port}")
-    print("  room = broadcast to LAN · private = 🔒 TLS direct (only you two get it)")
+    print("  room = encrypted mesh 🔒 · private = 🔒 TLS direct (only you two get it)")
     print("  softly broadcasting HELLO to your LAN… (ctrl-C to slip away)\n")
 
     net = Net(nick, args.port, args.pport)
@@ -1099,6 +1191,7 @@ def main():
     except KeyboardInterrupt:
         pass
     finally:
+        flush_fanout(1.0)  # let the last room messages go out before closing
         net.running = False
         try: net.bye()
         except OSError: pass
