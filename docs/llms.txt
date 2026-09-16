@@ -1,0 +1,28 @@
+# whisperlan
+
+> Same wifi. No server. No account. Terminal group chat plus encrypted
+> 1-on-1s for your local network. One Python file, zero dependencies, MIT.
+
+- Landing page: https://tarraf2020.github.io/whisperlan/
+- Repository: https://github.com/Tarraf2020/whisperlan
+- Install (macOS/Linux, Python 3.8+, no packages needed):
+  `curl -fsSL https://raw.githubusercontent.com/Tarraf2020/whisperlan/main/install.sh | bash`
+  or `brew tap Tarraf2020/whisperlan https://github.com/Tarraf2020/whisperlan && brew install Tarraf2020/whisperlan/whisperlan`
+- Run: `whisper --name ali` (a friend on the same wifi runs `whisper --name bob`)
+
+## What it is
+
+- Room chat goes out as one TLS-encrypted TCP unicast per peer (encrypted
+  mesh, never broadcast). Needs v1.5.0+ on both ends.
+- Private 1-on-1s (`/p @name`, `/dm @name msg`) travel direct TLS to exactly
+  one machine. If the peer is unreachable the message is not sent anywhere —
+  it never falls back to broadcast.
+- Presence (hello, heartbeat, typing) is plaintext broadcast: nicknames and
+  addresses only, never chat content.
+- Nothing is written to disk. `/panic yes` wipes the local session from memory.
+- Commands: type + Enter (room), `/p @name` (private), `/room` (back),
+  `/me`, `/shrug /flip /unflip /party`, `/online`, `/clear`, `/notify on|off`,
+  `/quit`. `@name` mentions trigger a desktop notification (Warp-native).
+- Made for LAN parties, classrooms, hackathons and dorm rooms.
+- Honest limits: self-signed certificates (TOFU), so a skilled active LAN
+  attacker could interfere; plaintext-TCP fallback when `openssl` is missing.
