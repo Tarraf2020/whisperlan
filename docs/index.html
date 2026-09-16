@@ -1,0 +1,120 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>whisperlan — terminal whispers for your LAN</title>
+<meta name="description" content="Same wifi. No server. No account. whisperlan turns every laptop on your local network into a chatroom, plus encrypted 1-on-1s. One Python file, zero dependencies.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600;800&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="style.css">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🤫</text></svg>">
+</head>
+<body>
+
+<header class="top">
+  <a class="brand" href="#"><span class="brand-mark">🤫</span> <span class="brand-name">whisperlan</span></a>
+  <nav class="top-links">
+    <a href="#install">Install</a>
+    <a href="#privacy">Privacy</a>
+    <a href="#commands">Commands</a>
+    <a href="https://github.com/Tarraf2020/whisperlan">GitHub</a>
+  </nav>
+</header>
+
+<main>
+  <section class="hero">
+    <div class="hero-copy">
+      <p class="version-line">v1.5.2, one file, zero dependencies, MIT</p>
+      <h1>Same wifi.<br>No server.<br><span class="hush">Just type.</span></h1>
+      <p class="lede">whisperlan turns every laptop on your local network into a chatroom, plus encrypted 1&#8209;on&#8209;1s. No accounts, no cloud, nothing written to disk. Quit and the session is gone.</p>
+      <div class="cta-row">
+        <button class="copy-btn" data-copy="curl -fsSL https://raw.githubusercontent.com/Tarraf2020/whisperlan/main/install.sh | bash">Copy install command</button>
+        <a class="ghost-btn" href="https://github.com/Tarraf2020/whisperlan">Star on GitHub</a>
+      </div>
+      <p class="hint">Works on macOS and Linux · Python 3.8 or newer, nothing to pip install</p>
+    </div>
+
+    <div class="terminal" role="img" aria-label="Animated demo of a whisperlan session: ali chats in the room, then sends an encrypted private message to bob">
+      <div class="term-bar">
+        <span class="dot"></span><span class="dot"></span><span class="dot"></span>
+        <span class="term-title">ali — whisper</span>
+        <button class="replay" id="replay" type="button">Replay demo</button>
+      </div>
+      <div class="term-screen" id="screen" aria-hidden="true"></div>
+    </div>
+  </section>
+
+  <section class="install" id="install">
+    <h2>Install in about thirty seconds</h2>
+    <div class="tabs" role="tablist" aria-label="Install methods">
+      <button role="tab" aria-selected="true" data-tab="brew" id="tab-brew">Homebrew</button>
+      <button role="tab" aria-selected="false" data-tab="curl" id="tab-curl">One-liner</button>
+      <button role="tab" aria-selected="false" data-tab="clone" id="tab-clone">Clone</button>
+    </div>
+    <div class="tab-panels">
+      <div role="tabpanel" id="panel-brew" aria-labelledby="tab-brew">
+        <pre><code>brew tap Tarraf2020/whisperlan https://github.com/Tarraf2020/whisperlan &amp;&amp; brew install Tarraf2020/whisperlan/whisperlan</code></pre>
+        <button class="copy-btn small" data-copy="brew tap Tarraf2020/whisperlan https://github.com/Tarraf2020/whisperlan && brew install Tarraf2020/whisperlan/whisperlan">Copy</button>
+      </div>
+      <div role="tabpanel" id="panel-curl" aria-labelledby="tab-curl" hidden>
+        <pre><code>curl -fsSL https://raw.githubusercontent.com/Tarraf2020/whisperlan/main/install.sh | bash</code></pre>
+        <button class="copy-btn small" data-copy="curl -fsSL https://raw.githubusercontent.com/Tarraf2020/whisperlan/main/install.sh | bash">Copy</button>
+      </div>
+      <div role="tabpanel" id="panel-clone" aria-labelledby="tab-clone" hidden>
+        <pre><code>git clone https://github.com/Tarraf2020/whisperlan.git
+cd whisperlan
+./install.sh</code></pre>
+        <button class="copy-btn small" data-copy="git clone https://github.com/Tarraf2020/whisperlan.git && cd whisperlan && ./install.sh">Copy</button>
+      </div>
+    </div>
+    <p class="then">Then open a new terminal and run <code>whisper --name ali</code>. A friend on the same wifi runs <code>whisper --name bob</code>. You find each other in about five seconds.</p>
+  </section>
+
+  <section class="privacy" id="privacy">
+    <h2>How private is private</h2>
+    <div class="priv-rows">
+      <div class="priv-row">
+        <p class="priv-name">Room, encrypted mesh</p>
+        <p>Group chat goes out as one TLS-encrypted unicast per peer. Never broadcast, so a passive sniffer sees connection metadata at most, never content. Needs v1.5.0 or newer on both ends.</p>
+      </div>
+      <div class="priv-row">
+        <p class="priv-name">1-on-1, direct TLS</p>
+        <p>Type <code>/p @bob</code> and every keystroke travels encrypted to exactly one machine. If bob is unreachable the message is not sent anywhere — it never falls back to broadcast, and the room never learns the chat exists.</p>
+      </div>
+      <div class="priv-row">
+        <p class="priv-name">Presence stays public</p>
+        <p>Hellos, heartbeats and typing indicators are plaintext broadcast: nicknames and addresses, never chat content. A sniffer sees who is online, not what they say. Self-signed certificates mean a skilled active attacker on your LAN could still interfere, so don't send bank passwords.</p>
+      </div>
+    </div>
+  </section>
+
+  <section class="commands" id="commands">
+    <h2>The whole manual fits here</h2>
+    <dl class="cmd-list">
+      <div><dt>just type + Enter</dt><dd>talk to everyone in the room</dd></div>
+      <div><dt>/p @bob</dt><dd>open an encrypted private chat, prompt turns into 🔒→bob</dd></div>
+      <div><dt>/dm @bob yo</dt><dd>one private message without switching views</dd></div>
+      <div><dt>/room</dt><dd>back to the group</dd></div>
+      <div><dt>/me dances</dt><dd>action message, works in private too</dd></div>
+      <div><dt>/shrug /flip /party</dt><dd>ascii classics, work in private too</dd></div>
+      <div><dt>/panic yes</dt><dd>nuke your session history. Memory only, nothing was ever on disk</dd></div>
+      <div><dt>/quit</dt><dd>slip away quietly</dd></div>
+    </dl>
+  </section>
+
+  <section class="closer">
+    <h2>Made for LAN parties, classrooms, hackathons and dorm rooms.</h2>
+    <p>If it made your table laugh, leave a star.</p>
+    <a class="ghost-btn" href="https://github.com/Tarraf2020/whisperlan">Tarraf2020 / whisperlan</a>
+  </section>
+</main>
+
+<footer>
+  <p>whisperlan is MIT licensed. One file, zero dependencies, works on a fresh macOS Python.</p>
+</footer>
+
+<script src="site.js"></script>
+</body>
+</html>
