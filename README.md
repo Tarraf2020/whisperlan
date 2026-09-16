@@ -7,6 +7,8 @@
 
 **Same WiFi. No server. No account. Just type.**
 
+🌐 Landing page: **https://tarraf2020.github.io/whisperlan/**
+
 `whisperlan` turns every laptop on your local network into a chatroom — plus encrypted 1-on-1s. One Python file, zero dependencies, macOS + Linux. The command stays short: type `whisper` (or `whisperlan`, same thing).
 
 ![whisper demo](docs/demo.svg)
